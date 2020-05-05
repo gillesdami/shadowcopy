@@ -1,7 +1,25 @@
+const HAS_PROPERTY_KEY_PARAM = ['getOwnPropertyDescriptor', 'has', 'get', 'set', 'deleteProperty', 'defineProperty'];
+const MAY_ERASE_VALUE_IN_OBJECT = ['set', 'defineProperty', 'deleteProperty'];
+
 let currentHandler = null; // Holds the original handler of the latest accessed ShadowCopy
 let currentTarget = null; // Holds the last accessed target object of a ShadowCopy
 let currentP = null; // Holds the last accessed property name of a ShadowCopy
 let currentCache = null; // Holds the cache of the lastest accessed ShadowCopy
+
+/**
+ * Set the current values
+ * 
+ * @param {object} handler 
+ * @param {Map} cache 
+ * @param {object} target 
+ * @param {string} p 
+ */
+function setCurrents(handler, cache, target, p) {
+    currentHandler = handler;
+    currentCache = cache;
+    currentTarget = target;
+    currentP = p;
+}
 
 export default class ShadowCopy {
     // The property chain called in the last accessed object
@@ -14,57 +32,50 @@ export default class ShadowCopy {
      */
     constructor(target, handler, path = []) {
         // A cache to avoid Proxy instances recreation at every access
-        const cache = new Map();
-        
+        const cache = new WeakMap();
+
         const finalHandler = {
-            ...handler,
-            
-            get: function(target, p, receiver) {
-                currentHandler = handler;
-                currentCache = cache;
-                currentTarget = target;
-                currentP = p;
-                ShadowCopy.path = [...path, p];
-                
-                if (!handler.get) {
-                    return ShadowCopy.nest();
-                }
-
-                return handler.get(target, p, receiver);
+            // those are the defaults handlers to ensure by default nesting with cache.
+            // target=args[0], p=args[1] value=args[2]
+            get (...args) {
+                setCurrents(handler, cache, args[0], args[1]);
+                ShadowCopy.path = [...path, args[1]];
+                return ShadowCopy.nest();
             },
-
-            set: function (target, p, value, receiver) {
-                currentHandler = handler;
-                currentCache = cache;
-                currentTarget = target;
-                currentP = p;
-                ShadowCopy.path = [...path, p];
-
-                cache.delete(target[p]);
-
-                if (!handler.set) {
-                    target[p] = ShadowCopy.nest(value);
-                    return true;
-                }
-                
-                return handler.set(target, p, value, receiver)
+            set (...args) {
+                setCurrents(handler, cache, args[0], args[1]);
+                cache.delete(args[0][args[1]]);
+                args[0][args[1]] = args[2];
+                return true;
             },
-
-            deleteProperty: function (target, p) {
-                currentHandler = handler;
-                currentCache = cache;
-                currentTarget = target;
-                currentP = p;
-
-                cache.delete(target[p]);
-
-                if (!handler.deleteProperty) {
-                    return delete target[p];
-                }
-
-                return handler.deleteProperty(target, p);
+            defineProperty (...args) {
+                cache.delete(args[0][args[1]]);
+                return Reflect.defineProperty(...args);
+            },
+            deleteProperty (...args) {
+                cache.delete(args[0][args[1]]);
+                return delete args[0][args[1]];
             }
         };
+
+        for (let [key, handle] of Object.entries(handler)) {
+            finalHandler[key] = function(...args) {
+                // target=args[0], p=args[1] 
+                setCurrents(handler, cache, args[0], args[1]);
+
+                if (HAS_PROPERTY_KEY_PARAM.includes(key)) {
+                    ShadowCopy.path = [...path, args[1]];
+                } else {
+                    ShadowCopy.path = [...path];
+                }
+                
+                if (MAY_ERASE_VALUE_IN_OBJECT.includes(key)) {
+                    cache.delete(args[0][args[1]]);
+                }
+
+                return handle(...args);
+            }
+        }
         
         return new Proxy(target, finalHandler);
     }
@@ -76,11 +87,11 @@ export default class ShadowCopy {
      * @param {object|undefined} original
      */
     static nest(original = currentTarget[currentP]) {
-        if (currentCache.has(currentTarget[currentP])) {
-            return currentCache.get(currentTarget[currentP]);
+        if (currentCache.has(original)) {
+            return currentCache.get(original);
         }
 
-        if (typeof original === 'object' && original !== null) {
+        if (typeof original === 'object' && original !== null || typeof original === 'function') {
             const shadow = new ShadowCopy(original, currentHandler, [...ShadowCopy.path]);
 
             currentCache.set(original, shadow);
