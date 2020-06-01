@@ -22,9 +22,6 @@ function setCurrents(handler, cache, target, p) {
 }
 
 export default class ShadowCopy {
-    // The property chain called in the last accessed object
-    static path = [];
-
     /**
      * @param {object} target
      * @param {object} handler
@@ -79,25 +76,28 @@ export default class ShadowCopy {
         
         return new Proxy(target, finalHandler);
     }
-
-    /**
-     * Return a ShadowCopy using currentHandler, ShadowCopy.path and currentP and currentTarget.
-     * Also, tries to restore or save the ShadowCopy from the cache
-     * 
-     * @param {object|undefined} original
-     */
-    static nest(original = currentTarget[currentP]) {
-        if (currentCache.has(original)) {
-            return currentCache.get(original);
-        }
-
-        if (typeof original === 'object' && original !== null || typeof original === 'function') {
-            const shadow = new ShadowCopy(original, currentHandler, [...ShadowCopy.path]);
-
-            currentCache.set(original, shadow);
-            return shadow;
-        }
-
-        return original;
-    }
 }
+
+// The property chain called in the last accessed object
+ShadowCopy.path = [];
+
+/**
+ * Return a ShadowCopy using currentHandler, ShadowCopy.path and currentP and currentTarget.
+ * Also, tries to restore or save the ShadowCopy from the cache
+ * 
+ * @param {object|undefined} original
+ */
+ShadowCopy.nest = function (original = currentTarget[currentP]) {
+    if (currentCache.has(original)) {
+        return currentCache.get(original);
+    }
+
+    if (typeof original === 'object' && original !== null || typeof original === 'function') {
+        const shadow = new ShadowCopy(original, currentHandler, [...ShadowCopy.path]);
+
+        currentCache.set(original, shadow);
+        return shadow;
+    }
+
+    return original;
+};
